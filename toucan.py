@@ -1,4 +1,6 @@
 from logging import disable
+from posixpath import expanduser
+import re
 from kivy.core import text
 from kivy.uix.boxlayout import BoxLayout
 from kivy.app import App
@@ -11,9 +13,24 @@ from kivy.uix.textinput import TextInput
 from kivy.uix.slider import Slider
 import os
 import can
+from threading import Thread
+import time
+from pythonosc import osc_message_builder
+from pythonosc import udp_client
+import socket
+import can
+import cantools
 
 class TouCAN(App):
     def build(self):
+        self.db = cantools.database.load_file('/home/giulio/Scrivania/Can DBC/VehicleNet_C2-CAN_R2_v01.dbc')
+        self.speed_message = self.db.get_message_by_name('BRAKE1')
+        self.ignition_message= self.db.get_message_by_name('BCM_COMMAND')
+        self.gaspedal_message= self.db.get_message_by_name('ENGINE5')
+
+        self.t= Thread(target=self.pollThread)
+        self.running=False
+        self.can0 = None
         self.window = GridLayout()
 
         #add widgets to window
@@ -45,7 +62,8 @@ class TouCAN(App):
                             text="Start Engine",
                             size_hint = (1,None),
                             bold = True,
-                            background_color = '#33ff00'
+                            background_color = '#33ff00',
+                            disabled=True
         )
         self.startengine.bind(on_press=self.OnStartButtonClick)
         self.window.add_widget(self.startengine)
@@ -75,7 +93,7 @@ class TouCAN(App):
         # speed slider
         self.speedslider = Slider(
                             min=0,
-                            max = 512,
+                            max = 511,
                             value=0,
                             orientation = 'vertical',
                             disabled = True
@@ -144,17 +162,28 @@ class TouCAN(App):
         self.brakepedalbutton.disabled=False
         self.gaspedalslider.disabled=False
         self.startengine.disabled=True
+        if(self.running==False):
+            ignition_data = self.ignition_message.encode({'BCMFpsCommand':0, 'BCMFpsConfirm':0, 'BCMFpsFailSts':0, 'TurnIndicatorSts':0, 'MessageCounter_BC':0,  
+            'KeyInIgnSts':0, 'CmdIgn_FailSts':0, 'CmdIgnSts':4, 'CRC_BC':0})
+            message = can.Message(arbitration_id=self.ignition_message.frame_id, data=ignition_data)
+            self.can0.send(message)
+
+            self.running=True
+            self.t.start()
+            
 
         # TO-DO: start the thread that will send the can msg flow
 
     def OnInitializeButtonClick(self, instance):
-        os.system('sudo ip link set can0 type can bitrate 1000000')
-        os.system('sudo ifconfig can0 up')
-        can0=can.interface.Bus(channel='can0', bustype='socketcan')
-        if(can0):
-            instance.text = "CAN interface running"
+            os.system('sudo ip link set can0 type can bitrate 1000000')
+            os.system('sudo ifconfig can0 up')
+            self.can0=can.interface.Bus(channel='can0', bustype='socketcan')
+
             
-    
+            if(self.can0):
+                instance.text = "CAN interface running"
+                instance.disabled=True
+                self.startengine.disabled=False    
 
     def OnShutdownButtonClick(self, instance):
         self.shutdownengne.disabled=True
@@ -164,9 +193,34 @@ class TouCAN(App):
         self.gaspedalslider.disabled=True
         self.gaspedalslider.value=0
         self.startengine.disabled=False
+        if(self.running==True):
+            self.running=False
+            self.t.join()
+            shutdown_data = self.ignition_message.encode({'BCMFpsCommand':0, 'BCMFpsConfirm':0, 'BCMFpsFailSts':0, 'TurnIndicatorSts':0, 'MessageCounter_BC':0,  
+                        'KeyInIgnSts':0, 'CmdIgn_FailSts':0, 'CmdIgnSts':1, 'CRC_BC':0})
+            message = can.Message(arbitration_id=self.ignition_message.frame_id, data=shutdown_data)
+            self.can0.send(message)
+
         
         # TO-DO: kill the thread 
 
+    def pollThread(self):
+        while(self.running):
+            print(self.speedslider.value)
+            data = self.speed_message.encode({'ABSActive':0, 
+                    'ESCActive':0, 'BrakeInterventionSts':0,'PrefillActive':0, 'CMMInterventionAck':3, 
+                    'VehicleSpeedVSOSig': self.speedslider.value, 'VehicleSpeedVSOSigFailSts':0, 'MessageCounter_B1':0, 'CRC_B1':0})
+            message = can.Message(arbitration_id=self.speed_message.frame_id, data=data)
+            self.can0.send(message)
+
+            print(self.gaspedalslider.value)
+            data = self.gaspedal_message.encode({'ActualPedalPos':self.gaspedalslider.value})
+            message= can.Message(arbitration_id=self.gaspedal_message.frame_id, data=data)
+            self.can0.send(message)
+            
+            time.sleep(0.2)
+
+        return
 
 
 if __name__ == "__main__":
