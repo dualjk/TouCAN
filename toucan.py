@@ -27,6 +27,7 @@ class TouCAN(App):
         self.speed_message = self.db.get_message_by_name('BRAKE1')
         self.ignition_message= self.db.get_message_by_name('BCM_COMMAND')
         self.gaspedal_message= self.db.get_message_by_name('ENGINE5')
+        self.brake_message= self.db.get_message_by_name('BRAKE10')
 
         self.t= Thread(target=self.pollThread)
         self.running=False
@@ -150,6 +151,10 @@ class TouCAN(App):
 
     def OnBrakingPedalButtonClick(self, instance):
         self.brakelabel.text = 'Braking status: ' + str(self.brakepedalbutton.state)
+        braking_data = self.brake_message.encode({'BrkPdl_Stat':1})
+        message = can.Message(arbitration_id=self.brake_message.frame_id, data=braking_data)
+        self.can0.send(message)
+
 
     def OnBrakingPedalButtonRelease(self, instance):
         self.brakelabel.text = 'Braking status: ' + str(self.brakepedalbutton.state)
@@ -171,8 +176,6 @@ class TouCAN(App):
             self.running=True
             self.t.start()
             
-
-        # TO-DO: start the thread that will send the can msg flow
 
     def OnInitializeButtonClick(self, instance):
             os.system('sudo ip link set can0 type can bitrate 1000000')
@@ -200,9 +203,7 @@ class TouCAN(App):
                         'KeyInIgnSts':0, 'CmdIgn_FailSts':0, 'CmdIgnSts':1, 'CRC_BC':0})
             message = can.Message(arbitration_id=self.ignition_message.frame_id, data=shutdown_data)
             self.can0.send(message)
-
-        
-        # TO-DO: kill the thread 
+ 
 
     def pollThread(self):
         while(self.running):
